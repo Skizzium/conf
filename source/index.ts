@@ -55,10 +55,10 @@ const MIGRATION_KEY = `${INTERNAL_KEY}.migrations.version`;
 class Conf<T extends Record<string, any> = Record<string, unknown>> implements Iterable<[keyof T, T[keyof T]]> {
 	readonly path: string;
 	readonly events: EventEmitter;
-	readonly #validator?: AjvValidateFunction;
 	readonly #encryptionKey?: string | Buffer | NodeJS.TypedArray | DataView;
 	readonly #options: Readonly<Partial<Options<T>>>;
 	readonly #defaultValues: Partial<T> = {};
+	#validator?: AjvValidateFunction;
 
 	constructor(partialOptions: Readonly<Partial<Options<T>>> = {}) {
 		const options: Partial<Options<T>> = {
@@ -94,30 +94,34 @@ class Conf<T extends Record<string, any> = Record<string, unknown>> implements I
 
 		this.#options = options;
 
-		if (options.schema) {
-			if (typeof options.schema !== 'object') {
-				throw new TypeError('The `schema` option must be an object.');
-			}
+		const loadValidator = (afterMigration: boolean): void => {
+			if (options.schema) {
+				if (typeof options.schema !== 'object') {
+					throw new TypeError('The `schema` option must be an object.');
+				}
 
-			const ajv = new Ajv({
-				allErrors: true,
-				useDefaults: true
-			});
-			ajvFormats(ajv);
+				const ajv = new Ajv({
+					allErrors: true,
+					useDefaults: true
+				});
+				ajvFormats(ajv);
 
-			const schema: JSONSchema = {
-				type: 'object',
-				properties: options.schema
-			};
+				const schema: JSONSchema = {
+					type: 'object',
+					properties: options.schema,
+				};
 
-			this.#validator = ajv.compile(schema);
+				this.#validator = ajv.compile(afterMigration ? schema : {});
 
-			for (const [key, value] of Object.entries<JSONSchema>(options.schema)) {
-				if (value?.default) {
-					this.#defaultValues[key as keyof T] = value.default;
+				for (const [key, value] of Object.entries(options.schema) as any) { // TODO: Remove the `as any`.
+					if (value?.default) {
+						this.#defaultValues[key as keyof T] = value.default; // eslint-disable-line @typescript-eslint/no-unsafe-assignment
+					}
 				}
 			}
-		}
+		};
+
+		loadValidator(false);
 
 		if (options.defaults) {
 			this.#defaultValues = {
@@ -165,6 +169,8 @@ class Conf<T extends Record<string, any> = Record<string, unknown>> implements I
 
 			this._migrate(options.migrations, options.projectVersion, options.beforeEachMigration);
 		}
+
+		loadValidator(true);
 	}
 
 	/**
